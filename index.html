@@ -69,7 +69,7 @@ footer{text-align:center;font-size:.75rem;color:#6b725e;padding:0 10px 18px}
       <li>上下左右につながる空き点（呼吸点）がなくなった相手のダムは、取り除かれます。</li>
       <li>自分のダムを置いた結果、自分のダムにも呼吸点がなくなる手は打てません（相手を取れる場合を除く）。</li>
       <li>「パス」を両者が続けて選ぶと終了します。終了時は、ダムと、周囲を一方のチームだけが囲んだ空き点を数えます。</li>
-      <li>この試作版は入門用です。正式な囲碁のコミ・細かなルールや対局記録には対応していません。</li>
+      <li>対局終了後、確定した陣地にはビーバーのアイコンが表示されます。</li><li>濃い駒は「目が2つ以上ある安全な石」の目安、薄い駒は終了時に相手の陣地に隣接するなどの条件による「死に石の可能性」の目安です。簡易表示であり、正式な囲碁の死活判定ではありません。</li><li>この試作版は入門用です。正式な囲碁のコミ・細かなルールや対局記録には対応していません。</li>
     </ol>
   </details>
 </main>
@@ -127,21 +127,9 @@ function undo(){
  const h=history.pop();board=clone(h.board);turn=h.turn;passes=h.passes;finished=h.finished;lastMove=h.lastMove;render();updateUI('1手戻しました。');
 }
 function score(){
- const totals={1:0,2:0}, stones={1:0,2:0}, seen=new Set();
- for(let y=0;y<N;y++)for(let x=0;x<N;x++)if(board[y][x]){stones[board[y][x]]++;totals[board[y][x]]++;}
- for(let y=0;y<N;y++)for(let x=0;x<N;x++){
-  if(board[y][x]!==EMPTY||seen.has(y*N+x))continue;
-  const stack=[[x,y]], region=[], borders=new Set();seen.add(y*N+x);
-  while(stack.length){const [cx,cy]=stack.pop();region.push([cx,cy]);
-   for(const [nx,ny] of [[cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1]]){
-    if(nx<0||nx>=N||ny<0||ny>=N)continue;
-    const v=board[ny][nx];
-    if(v===EMPTY&&!seen.has(ny*N+nx)){seen.add(ny*N+nx);stack.push([nx,ny]);}
-    else if(v!==EMPTY)borders.add(v);
-   }
-  }
-  if(borders.size===1)totals[[...borders][0]]+=region.length;
- }
+ const totals={1:0,2:0};
+ for(let y=0;y<N;y++)for(let x=0;x<N;x++)if(board[y][x])totals[board[y][x]]++;
+ for(const region of analyzeTerritories())if(region.owner)totals[region.owner]+=region.points.length;
  return totals;
 }
 function render(){
@@ -153,6 +141,7 @@ function render(){
  // land edge
  ctx.strokeStyle='#a68b5b';ctx.lineWidth=23;ctx.strokeRect(12,12,576,576);
  ctx.strokeStyle='#ead8ad';ctx.lineWidth=15;ctx.strokeRect(12,12,576,576);
+ drawForestEdge();
  ctx.strokeStyle='#7e704e';ctx.lineWidth=1.6;
  for(let i=0;i<N;i++){
   const p=pad+i*step;ctx.beginPath();ctx.moveTo(pad,p);ctx.lineTo(600-pad,p);ctx.stroke();ctx.beginPath();ctx.moveTo(p,pad);ctx.lineTo(p,600-pad);ctx.stroke();
@@ -160,11 +149,83 @@ function render(){
  // intersections
  for(let y=0;y<N;y++)for(let x=0;x<N;x++){const px=pad+x*step,py=pad+y*step;
   ctx.beginPath();ctx.arc(px,py,2.5,0,Math.PI*2);ctx.fillStyle='#655d43';ctx.fill();
-  if(board[y][x])drawDam(px,py,board[y][x]);
+  if(board[y][x])drawDam(px,py,board[y][x],groupVisualStatus(x,y));
+ }
+ if(finished){
+  for(const region of analyzeTerritories()){
+   if(!region.owner || region.points.length<2)continue;
+   const cx=region.points.reduce((s,p)=>s+pad+p[0]*step,0)/region.points.length;
+   const cy=region.points.reduce((s,p)=>s+pad+p[1]*step,0)/region.points.length;
+   ctx.save();ctx.font='24px system-ui, Apple Color Emoji, "Segoe UI Emoji", sans-serif';
+   ctx.textAlign='center';ctx.textBaseline='middle';ctx.globalAlpha=.9;ctx.fillText('🦫',cx,cy);ctx.restore();
+  }
  }
  if(lastMove){const [x,y]=lastMove;ctx.beginPath();ctx.arc(pad+x*step,pad+y*step,4,0,Math.PI*2);ctx.fillStyle='#fff7d9';ctx.fill();ctx.strokeStyle='#24382d';ctx.lineWidth=1;ctx.stroke();}
 }
-function drawDam(x,y,c){
+function drawForestEdge(){
+ // Decorative trees stay in the narrow shoreline margin, outside all grid intersections.
+ const spots=[[22,25],[578,25],[22,575],[578,575],[22,105],[578,105],[22,495],[578,495],[100,22],[500,22],[100,578],[500,578],[300,22],[300,578]];
+ for(let i=0;i<spots.length;i++){
+  const [x,y]=spots[i],r=(i%3===0?7:5.5);
+  ctx.save();ctx.fillStyle=i%2?'#648b58':'#47784e';ctx.strokeStyle='#355b3a';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(x,y-r*1.5);ctx.lineTo(x-r,y+r*.5);ctx.lineTo(x+r,y+r*.5);ctx.closePath();ctx.fill();ctx.stroke();
+  ctx.beginPath();ctx.moveTo(x,y-r*.5);ctx.lineTo(x-r*.8,y+r);ctx.lineTo(x+r*.8,y+r);ctx.closePath();ctx.fill();ctx.stroke();
+  ctx.fillStyle='#8a6b45';ctx.fillRect(x-1.2,y+r,2.4,3);ctx.restore();
+ }
+}
+function analyzeTerritories(){
+ const seen=new Set(), regions=[];
+ for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+  if(board[y][x]!==EMPTY||seen.has(y*N+x))continue;
+  const stack=[[x,y]], points=[], borders=new Set();seen.add(y*N+x);
+  while(stack.length){
+   const [cx,cy]=stack.pop();points.push([cx,cy]);
+   for(const [nx,ny] of [[cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1]]){
+    if(nx<0||nx>=N||ny<0||ny>=N)continue;
+    const v=board[ny][nx];
+    if(v===EMPTY&&!seen.has(ny*N+nx)){seen.add(ny*N+nx);stack.push([nx,ny]);}
+    else if(v!==EMPTY)borders.add(v);
+   }
+  }
+  regions.push({points,owner:borders.size===1?[...borders][0]:0});
+ }
+ return regions;
+}
+function eyeCountForGroup(g,color){
+ // Simplified eye estimate: count adjacent empty regions that touch no opposing stones.
+ const seen=new Set();let eyes=0;
+ for(const [sx,sy] of g.stones){
+  for(const [nx,ny] of [[sx+1,sy],[sx-1,sy],[sx,sy+1],[sx,sy-1]]){
+   if(nx<0||nx>=N||ny<0||ny>=N||board[ny][nx]!==EMPTY||seen.has(ny*N+nx))continue;
+   const stack=[[nx,ny]];seen.add(ny*N+nx);let touchesOther=false;
+   while(stack.length){
+    const [cx,cy]=stack.pop();
+    for(const [ax,ay] of [[cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1]]){
+     if(ax<0||ax>=N||ay<0||ay>=N)continue;
+     if(board[ay][ax]===EMPTY&&!seen.has(ay*N+ax)){seen.add(ay*N+ax);stack.push([ax,ay]);}
+     else if(board[ay][ax]!==EMPTY&&board[ay][ax]!==color)touchesOther=true;
+    }
+   }
+   if(!touchesOther)eyes++;
+  }
+ }
+ return eyes;
+}
+function groupVisualStatus(x,y){
+ const color=board[y][x], g=groupAt(board,x,y);
+ if(eyeCountForGroup(g,color)>=2)return 'secure';
+ if(finished){
+  // Pale stones at game end are a visual hint only, not an official dead-stone adjudication.
+  const enemy=3-color;
+  for(const [ax,ay] of [[x+1,y],[x-1,y],[x,y+1],[x,y-1]]){
+   if(ax<0||ax>=N||ay<0||ay>=N||board[ay][ax]!==EMPTY)continue;
+   const reg=analyzeTerritories().find(r=>r.points.some(([px,py])=>px===ax&&py===ay));
+   if(reg&&reg.owner===enemy)return 'dead';
+  }
+ }
+ return 'normal';
+}
+function drawDam(x,y,c,status='normal'){
  const r=step*.31;
  ctx.save();ctx.shadowColor='#28433a55';ctx.shadowBlur=5;ctx.shadowOffsetY=2;
  ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fillStyle=colors[c];ctx.fill();ctx.restore();
