@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ビーバー合戦</title>
+<style>
+:root{--ink:#24382d;--water:#d9eef0;--water2:#c8e4e7;--land:#d8c39a;--brown:#8b542d;--green:#2f7a45;--cream:#fffaf0}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;background:linear-gradient(#f3ead4,#e3d2ae);color:var(--ink);min-height:100vh}
+header{text-align:center;padding:16px 12px 8px}
+h1{font-size:clamp(1.5rem,5vw,2.2rem);margin:0;letter-spacing:.06em}
+.subtitle{margin:5px 0 0;font-size:.9rem}
+main{width:min(94vw,680px);margin:0 auto;padding:8px 0 24px}
+.panel{background:#fffaf0dd;border:1px solid #bca77e;border-radius:16px;padding:12px;box-shadow:0 5px 16px #604a2318}
+.statusline{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.turn{font-weight:750;font-size:1rem}
+.pill{display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:7px 11px;background:#eee3cb;font-size:.88rem;font-weight:650}
+.dot{width:14px;height:14px;border-radius:50%;display:inline-block;border:1px solid #0003}
+.dot.brown{background:var(--brown)}.dot.green{background:var(--green)}
+.board-wrap{padding:10px;border-radius:14px;background:linear-gradient(135deg,#9fcfd3,#d2ebeb);border:3px solid #9c8357;box-shadow:inset 0 0 0 3px #f1dfb7}
+#board{display:block;width:100%;height:auto;touch-action:manipulation;cursor:pointer;border-radius:8px}
+.controls{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+button{font:inherit;font-weight:700;border:1px solid #b8a47d;border-radius:11px;padding:11px 8px;background:#fffaf0;color:var(--ink);cursor:pointer;box-shadow:0 2px 0 #d0bd96}
+button:active{transform:translateY(1px);box-shadow:none}
+button.primary{background:#355f43;color:white;border-color:#355f43}
+button:disabled{opacity:.45;cursor:not-allowed}
+.score-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.score{padding:10px;border-radius:12px;background:#fffdf7;border:1px solid #ded0b2}
+.score strong{display:block;font-size:1.15rem;margin-top:3px}
+.small{font-size:.82rem;color:#536458}
+#message{min-height:1.5em;margin:10px 2px 0;font-size:.9rem}
+details{margin-top:12px;background:#fffaf0c9;border:1px solid #cbb991;border-radius:12px;padding:10px 12px}
+summary{font-weight:700;cursor:pointer}
+details p,details li{font-size:.88rem;line-height:1.6}
+footer{text-align:center;font-size:.75rem;color:#6b725e;padding:0 10px 18px}
+@media(max-width:420px){.panel{padding:9px}.board-wrap{padding:6px}.controls{gap:6px}button{font-size:.85rem;padding:10px 4px}.score{padding:8px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>🦫 ビーバー合戦</h1>
+  <p class="subtitle">ダムを築いて、湖の陣地を広げよう！</p>
+</header>
+<main>
+  <section class="panel">
+    <div class="statusline">
+      <div class="turn" id="turnLabel">茶色チームの番</div>
+      <div class="pill"><span class="dot brown" id="turnDot"></span><span id="turnName">茶色のビーバー</span></div>
+    </div>
+    <div class="board-wrap">
+      <canvas id="board" width="600" height="600" aria-label="9×9の湖の盤面"></canvas>
+    </div>
+    <div class="controls">
+      <button class="primary" id="passBtn">パスする</button>
+      <button id="undoBtn">1手戻す</button>
+      <button id="resetBtn">最初から</button>
+    </div>
+    <div class="score-row">
+      <div class="score"><span><span class="dot brown"></span> 茶色チーム</span><strong id="brownScore">0 点</strong><span class="small" id="brownDetail">ダム 0</span></div>
+      <div class="score"><span><span class="dot green"></span> 緑色チーム</span><strong id="greenScore">0 点</strong><span class="small" id="greenDetail">ダム 0</span></div>
+    </div>
+    <div id="message" role="status">湖の交点をタップして、ダムを置いてください。</div>
+  </section>
+  <details>
+    <summary>遊び方・ルール</summary>
+    <ol>
+      <li>茶色と緑色が交互に、湖の線が交わる点へダムを1つずつ置きます。</li>
+      <li>上下左右につながる空き点（呼吸点）がなくなった相手のダムは、取り除かれます。</li>
+      <li>自分のダムを置いた結果、自分のダムにも呼吸点がなくなる手は打てません（相手を取れる場合を除く）。</li>
+      <li>「パス」を両者が続けて選ぶと終了します。終了時は、ダムと、周囲を一方のチームだけが囲んだ空き点を数えます。</li>
+      <li>この試作版は入門用です。正式な囲碁のコミ・細かなルールや対局記録には対応していません。</li>
+    </ol>
+  </details>
+</main>
+<footer>湖の上にダムを築く、2人用ローカル対戦ゲーム</footer>
+<script>
+(() => {
+const N=9, EMPTY=0, BROWN=1, GREEN=2;
+const canvas=document.getElementById('board'), ctx=canvas.getContext('2d');
+let board, turn, passes, history, finished, lastMove;
+const colors={1:'#8b542d',2:'#2f7a45'};
+const names={1:'茶色のビーバー',2:'緑色のビーバー'};
+const pad=44, step=(600-pad*2)/(N-1);
+function fresh(){board=Array.from({length:N},()=>Array(N).fill(EMPTY));turn=BROWN;passes=0;history=[];finished=false;lastMove=null;render();updateUI('湖の交点をタップして、ダムを置いてください。');}
+function clone(b){return b.map(r=>r.slice());}
+function groupAt(b,x,y){
+ const c=b[y][x]; if(!c)return {stones:[],liberties:new Set()};
+ const seen=new Set([y*N+x]), stones=[], liberties=new Set(), stack=[[x,y]];
+ while(stack.length){const [cx,cy]=stack.pop();stones.push([cx,cy]);
+  for(const [nx,ny] of [[cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1]]){
+   if(nx<0||nx>=N||ny<0||ny>=N)continue;
+   if(b[ny][nx]===EMPTY)liberties.add(ny*N+nx);
+   else if(b[ny][nx]===c&&!seen.has(ny*N+nx)){seen.add(ny*N+nx);stack.push([nx,ny]);}
+  }
+ }
+ return {stones,liberties};
+}
+function attempt(x,y){
+ if(finished||board[y][x]!==EMPTY)return;
+ const before=clone(board);board[y][x]=turn;
+ let captured=0;
+ for(const [nx,ny] of [[x+1,y],[x-1,y],[x,y+1],[x,y-1]]){
+  if(nx<0||nx>=N||ny<0||ny>=N||board[ny][nx]!==3-turn)continue;
+  const g=groupAt(board,nx,ny);
+  if(g.liberties.size===0){for(const [sx,sy] of g.stones){board[sy][sx]=EMPTY;captured++;}}
+ }
+ if(groupAt(board,x,y).liberties.size===0){board=before;updateUI('そこには置けません。別の交点を選んでください。');return;}
+ // Simple ko: disallow immediate recreation of the board position from two plies ago.
+ if(history.length>=1 && sameBoard(board,history[history.length-1].board)){
+   board=before;updateUI('コウのルールにより、直後に同じ盤面へ戻す手は打てません。');return;
+ }
+ history.push({board:before,turn,passes,finished,lastMove});
+ lastMove=[x,y];passes=0;turn=3-turn;render();
+ updateUI(captured?`${captured}個の相手のダムを取り除きました。`: 'ダムを置きました。');
+}
+function sameBoard(a,b){return a.every((r,y)=>r.every((v,x)=>v===b[y][x]));}
+function pass(){
+ if(finished)return;
+ history.push({board:clone(board),turn,passes,finished,lastMove});
+ passes++;
+ if(passes>=2){finished=true;render();const s=score();const winner=s[1]===s[2]?'引き分け':s[1]>s[2]?'茶色チームの勝ち！':'緑色チームの勝ち！';updateUI(`対局終了：${winner}（茶色 ${s[1]} 点／緑色 ${s[2]} 点）`);}
+ else{turn=3-turn;render();updateUI(`${names[3-turn]}がパスしました。続けるか、もう一度パスして終了できます。`);}
+}
+function undo(){
+ if(!history.length)return;
+ const h=history.pop();board=clone(h.board);turn=h.turn;passes=h.passes;finished=h.finished;lastMove=h.lastMove;render();updateUI('1手戻しました。');
+}
+function score(){
+ const totals={1:0,2:0}, stones={1:0,2:0}, seen=new Set();
+ for(let y=0;y<N;y++)for(let x=0;x<N;x++)if(board[y][x]){stones[board[y][x]]++;totals[board[y][x]]++;}
+ for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+  if(board[y][x]!==EMPTY||seen.has(y*N+x))continue;
+  const stack=[[x,y]], region=[], borders=new Set();seen.add(y*N+x);
+  while(stack.length){const [cx,cy]=stack.pop();region.push([cx,cy]);
+   for(const [nx,ny] of [[cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1]]){
+    if(nx<0||nx>=N||ny<0||ny>=N)continue;
+    const v=board[ny][nx];
+    if(v===EMPTY&&!seen.has(ny*N+nx)){seen.add(ny*N+nx);stack.push([nx,ny]);}
+    else if(v!==EMPTY)borders.add(v);
+   }
+  }
+  if(borders.size===1)totals[[...borders][0]]+=region.length;
+ }
+ return totals;
+}
+function render(){
+ ctx.clearRect(0,0,600,600);
+ // Water with subtle ripples
+ const grd=ctx.createLinearGradient(0,0,600,600);grd.addColorStop(0,'#dff1ef');grd.addColorStop(1,'#b8dfe2');ctx.fillStyle=grd;ctx.fillRect(0,0,600,600);
+ ctx.strokeStyle='rgba(255,255,255,.35)';ctx.lineWidth=1;
+ for(let i=0;i<11;i++){ctx.beginPath();ctx.ellipse(60+i*47,70+(i%4)*117,22,5,0,0,Math.PI*2);ctx.stroke();}
+ // land edge
+ ctx.strokeStyle='#a68b5b';ctx.lineWidth=23;ctx.strokeRect(12,12,576,576);
+ ctx.strokeStyle='#ead8ad';ctx.lineWidth=15;ctx.strokeRect(12,12,576,576);
+ ctx.strokeStyle='#7e704e';ctx.lineWidth=1.6;
+ for(let i=0;i<N;i++){
+  const p=pad+i*step;ctx.beginPath();ctx.moveTo(pad,p);ctx.lineTo(600-pad,p);ctx.stroke();ctx.beginPath();ctx.moveTo(p,pad);ctx.lineTo(p,600-pad);ctx.stroke();
+ }
+ // intersections
+ for(let y=0;y<N;y++)for(let x=0;x<N;x++){const px=pad+x*step,py=pad+y*step;
+  ctx.beginPath();ctx.arc(px,py,2.5,0,Math.PI*2);ctx.fillStyle='#655d43';ctx.fill();
+  if(board[y][x])drawDam(px,py,board[y][x]);
+ }
+ if(lastMove){const [x,y]=lastMove;ctx.beginPath();ctx.arc(pad+x*step,pad+y*step,4,0,Math.PI*2);ctx.fillStyle='#fff7d9';ctx.fill();ctx.strokeStyle='#24382d';ctx.lineWidth=1;ctx.stroke();}
+}
+function drawDam(x,y,c){
+ const r=step*.31;
+ ctx.save();ctx.shadowColor='#28433a55';ctx.shadowBlur=5;ctx.shadowOffsetY=2;
+ ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fillStyle=colors[c];ctx.fill();ctx.restore();
+ ctx.strokeStyle=c===BROWN?'#5f351b':'#1e542f';ctx.lineWidth=2;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.stroke();
+ // twig bundle strokes
+ ctx.lineCap='round';ctx.lineWidth=2.5;
+ const twig=c===BROWN?'#d7a16b':'#9bc77e';
+ ctx.strokeStyle=twig;
+ for(let i=-1;i<=1;i++){ctx.beginPath();ctx.moveTo(x-r*.58,y+i*r*.48);ctx.lineTo(x+r*.58,y+i*r*.20);ctx.stroke();}
+ ctx.strokeStyle=c===BROWN?'#6c3f24':'#205d36';ctx.lineWidth=1.3;
+ ctx.beginPath();ctx.moveTo(x-r*.52,y-r*.48);ctx.lineTo(x+r*.4,y+r*.5);ctx.stroke();
+}
+function updateUI(msg){
+ document.getElementById('turnLabel').textContent=finished?'対局終了':`${names[turn]}の番`;
+ document.getElementById('turnName').textContent=finished?'終了':names[turn];
+ document.getElementById('turnDot').className='dot '+(turn===BROWN?'brown':'green');
+ const s=score(), counts={1:0,2:0};for(const row of board)for(const v of row)if(v)counts[v]++;
+ document.getElementById('brownScore').textContent=`${s[1]} 点`;document.getElementById('greenScore').textContent=`${s[2]} 点`;
+ document.getElementById('brownDetail').textContent=`ダム ${counts[1]}個`;
+ document.getElementById('greenDetail').textContent=`ダム ${counts[2]}個`;
+ document.getElementById('message').textContent=msg;
+ document.getElementById('passBtn').disabled=finished;
+ document.getElementById('undoBtn').disabled=history.length===0;
+}
+function coords(evt){
+ const rect=canvas.getBoundingClientRect(), scale=600/rect.width;
+ const px=(evt.clientX-rect.left)*scale,py=(evt.clientY-rect.top)*scale;
+ const x=Math.round((px-pad)/step),y=Math.round((py-pad)/step);
+ if(x<0||x>=N||y<0||y>=N||Math.hypot(px-(pad+x*step),py-(pad+y*step))>step*.42)return;
+ attempt(x,y);
+}
+canvas.addEventListener('pointerdown',coords);
+document.getElementById('passBtn').addEventListener('click',pass);
+document.getElementById('undoBtn').addEventListener('click',undo);
+document.getElementById('resetBtn').addEventListener('click',()=>{if(confirm('盤面をリセットして最初から始めますか？'))fresh();});
+fresh();
+})();
+</script>
+</body>
+</html>
